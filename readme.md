@@ -2,9 +2,15 @@
 
 `khinsider.py` is a [Python](https://www.python.org/) interface and script for getting [khinsider](http://downloads.khinsider.com/) soundtracks. It makes khinsider mass downloads a breeze. It's easy to use - check it!
 
-From the command line (i.e. regular usage):
 
+Obtain your Browser's User-Agent and export the variable.
 ```cmd
+navigator.UserAgent
+```
+
+From the command line (i.e. regular usage):
+```cmd
+SCRAPER_USER_AGENT="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36"
 khinsider.py jumping-flash
 ```
 

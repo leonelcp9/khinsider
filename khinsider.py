@@ -12,6 +12,7 @@ import re
 import sys
 from functools import wraps
 from itertools import chain
+from curl_cffi.requests.exceptions import RequestException as CffiError
 
 try:
     from urllib.parse import unquote, urljoin, urlsplit
@@ -120,15 +121,17 @@ if __name__ == '__main__':
 
 # ------
 
-import cloudscraper
 import requests
 from bs4 import BeautifulSoup
 
 DEFAULT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
-_SESSION = cloudscraper.create_scraper()
-_SESSION.headers.update({'User-Agent': os.environ.get('SCRAPER_USER_AGENT', DEFAULT_UA)})
+from curl_cffi import requests as cffi_requests
+_SESSION = cffi_requests.Session(impersonate="chrome")
 
+if os.environ.get('KHINSIDER_COOKIE'):
+    _SESSION.headers['Cookie'] = os.environ['KHINSIDER_COOKIE']
+    
 BASE_URL = 'https://downloads.khinsider.com/'
 
 # Although some of these are valid on Linux, keeping this the same
@@ -230,7 +233,7 @@ def friendlyDownloadFile(file, path, index, total, verbose=False):
                 unicodePrint("Couldn't download {}. Trying again...".format(filename), file=sys.stderr)
             try:
                 file.download(path)
-            except (requests.ConnectionError, requests.Timeout):
+            except (requests.ConnectionError, requests.Timeout, CffiError):
                 pass
             else:
                 break
@@ -296,11 +299,20 @@ class Soundtrack(object):
 
     @lazyProperty
     def _contentSoup(self):
-        soup = getSoup(self.url)
+        r = _SESSION.get(self.url, timeout=20)
+        soup = toSoup(r)
         contentSoup = soup.find(id='pageContent')
-        if contentSoup.find('p').string == "No such album":
-            # The pageContent and p exist even if the soundtrack doesn't, so no
-            # need for error handling here.
+        if contentSoup is None:
+            title = soup.title.get_text(strip=True) if soup.title else ''
+            if r.status_code in (403, 503) or 'Just a moment' in title:
+                raise KhinsiderError(
+                    "Blocked by Cloudflare (HTTP {}). Try setting SCRAPER_USER_AGENT "
+                    "and KHINSIDER_COOKIE from your browser.".format(r.status_code))
+            raise KhinsiderError(
+                "Unexpected page (HTTP {}, title {!r}); KHInsider's layout may have "
+                "changed.".format(r.status_code, title))
+        p = contentSoup.find('p')
+        if p is not None and p.get_text(strip=True) == "No such album":
             raise NonexistentSoundtrackError(self)
         return contentSoup
 
@@ -335,7 +347,7 @@ class Soundtrack(object):
         anchors = [a for a in table('a') if a.find('img')]
         urls = [a['href'] for a in anchors]
         images = [File(urljoin(self.url, url)) for url in urls]
-        print(images)
+        # print(images)
         return images
 
     def download(self, path='', makeDirs=True, formatOrder=None, verbose=False):
@@ -447,9 +459,12 @@ class File(object):
     
     def download(self, path):
         """Download the file to `path`."""
-        response = _SESSION.get(self.url, timeout=10)
-        with open(path, 'wb') as outFile:
+        response = _SESSION.get(self.url, timeout=600)
+        response.raise_for_status()
+        tmpPath = path + '.part'
+        with open(tmpPath, 'wb') as outFile:
             outFile.write(response.content)
+        os.replace(tmpPath, path)
 
 
 def download(soundtrackId, path='', makeDirs=True, formatOrder=None, verbose=False):
